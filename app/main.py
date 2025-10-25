@@ -3,8 +3,9 @@ import os
 from datetime import datetime
 from typing import Optional, Literal, List
 
-from fastapi import FastAPI, HTTPException, Query, Depends
+from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from .auth import verify_firebase_token
@@ -14,30 +15,65 @@ from .prompt_templates import get_prompt
 from .schemas import GenerateRequest, GenerationOut, ReportCreate, ReportOut, FindingTypeSummary
 from .crud import create_report, list_reports, types_summary
 from langchain_core.output_parsers import StrOutputParser
-from dotenv import load_dotenv
-
-load_dotenv()
 
 app = FastAPI(title="Pentest Report Generator")
 
 # ========================================
-# CORS Configuration - UPDATED FOR PRODUCTION
+# CORS Configuration - CRITICAL FOR PRODUCTION
 # ========================================
-# Get allowed origins from environment variable or use defaults
+# Define allowed origins - MUST include your frontend domains
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
-    "https://findings-gen-ui.vercel.app,http://localhost:3000,http://localhost:5173"
+    # Default to common development + production URLs
+    "https://findings-gen-ui.vercel.app,"
+    "http://localhost:3000,"
+    "http://localhost:5173,"
+    "http://localhost:5174"
 ).split(",")
 
+# Remove any whitespace from origins
+ALLOWED_ORIGINS = [origin.strip() for origin in ALLOWED_ORIGINS if origin.strip()]
+
+# Add CORS middleware - MUST be before routes
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,  # Specific origins instead of "*"
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Be explicit
-    allow_headers=["*"],  # Or be specific: ["Content-Type", "Authorization"]
-    expose_headers=["*"],  # Allow frontend to read response headers
-    max_age=3600,  # Cache preflight requests for 1 hour
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
 )
+
+# ========================================
+# Manual CORS Headers (Fallback)
+# ========================================
+@app.middleware("http")
+async def add_cors_headers(request: Request, call_next):
+    """Add CORS headers to all responses as a fallback."""
+    origin = request.headers.get("origin")
+    
+    # Handle preflight requests
+    if request.method == "OPTIONS":
+        response = JSONResponse(content={"status": "ok"})
+        if origin in ALLOWED_ORIGINS:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+            response.headers["Access-Control-Max-Age"] = "3600"
+        return response
+    
+    # Process the request
+    response = await call_next(request)
+    
+    # Add CORS headers to response
+    if origin in ALLOWED_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Expose-Headers"] = "*"
+    
+    return response
 
 llm = MistralLLM()
 parser = StrOutputParser()
@@ -58,17 +94,49 @@ FINDINGS_CATALOG = [
 @app.on_event("startup")
 def _startup():
     """Initialize database on startup."""
+    print("🚀 Starting Pentest Report Generator...")
+    print(f"📍 Allowed CORS Origins: {ALLOWED_ORIGINS}")
     init_db()
+    print("✅ Database initialized")
 
-# Add a health check endpoint for debugging
-@app.get("/health")
-def health_check():
-    """Health check endpoint."""
+# ========================================
+# Health & Debug Endpoints
+# ========================================
+@app.get("/")
+async def root():
+    """Root endpoint."""
     return {
         "status": "ok",
-        "cors_origins": ALLOWED_ORIGINS,
-        "message": "API is running"
+        "message": "Pentest Report Generator API",
+        "version": "1.0.0"
     }
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint with CORS diagnostics."""
+    return {
+        "status": "ok",
+        "message": "API is running",
+        "cors_origins": ALLOWED_ORIGINS,
+        "environment": os.getenv("VERCEL_ENV", "development"),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(request: Request, rest_of_path: str):
+    """Handle all OPTIONS preflight requests."""
+    origin = request.headers.get("origin", "")
+    
+    response = JSONResponse(content={"status": "ok"})
+    
+    if origin in ALLOWED_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Max-Age"] = "3600"
+    
+    return response
 
 def _section(text: str, heading: str) -> str:
     """Extract a section from generated text."""
@@ -87,6 +155,9 @@ def _section(text: str, heading: str) -> str:
             end = min(end, i)
     return text[start:end].strip()
 
+# ========================================
+# API Endpoints
+# ========================================
 @app.get("/findings", response_model=List[str])
 async def list_findings():
     """Get list of all available finding types."""

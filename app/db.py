@@ -1,7 +1,7 @@
 # app/db.py
 import os
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine
 from .models import Base
 from dotenv import load_dotenv
 
@@ -9,12 +9,20 @@ load_dotenv()
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/pentest"
+    "postgresql+psycopg2://postgres:postgres@localhost:5432/pentest"
 )
 
-engine: AsyncEngine = create_async_engine(DATABASE_URL, echo=False, future=True)
-async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+
+def init_db():
+    Base.metadata.create_all(bind=engine)
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

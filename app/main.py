@@ -41,8 +41,8 @@ FINDINGS_CATALOG = [
 ]
 
 @app.on_event("startup")
-async def _startup():
-    await init_db()
+def _startup():
+    init_db()
 
 def _section(text: str, heading: str) -> str:
     if heading not in text:
@@ -65,8 +65,8 @@ async def list_findings():
     return FINDINGS_CATALOG
 
 @app.get("/reports/types", response_model=List[FindingTypeSummary])
-async def get_types(approved_only: bool = True, user=Depends(verify_firebase_token)):
-    return await types_summary(user_id=user["uid"], approved_only=approved_only)
+def get_types(approved_only: bool = True, user=Depends(verify_firebase_token)):
+    return types_summary(user_id=user["uid"], approved_only=approved_only)
 
 # ---------- PREVIEW ONLY ----------
 @app.post("/generate", response_model=GenerationOut)
@@ -104,7 +104,7 @@ async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
 
 # ---------- SAVE ONLY WHEN APPROVED (no PoC stored) ----------
 @app.post("/reports", response_model=ReportOut)
-async def save_report(payload: ReportCreate, user=Depends(verify_firebase_token)):
+def save_report(payload: ReportCreate, user=Depends(verify_firebase_token)):
     data = dict(
         template=payload.template, finding_name=payload.finding_name, input_summary=payload.input_summary,
         title=payload.title, summary=payload.summary, vulnerability_overview=payload.vulnerability_overview,
@@ -112,7 +112,7 @@ async def save_report(payload: ReportCreate, user=Depends(verify_firebase_token)
         description=payload.description, severity=payload.severity, suggested_fix=payload.suggested_fix,
         references=payload.references, approved=payload.approved, created_at=datetime.utcnow()
     )
-    saved = await create_report(data, user_id=user["uid"])
+    saved = create_report(data, user_id=user["uid"])
     return ReportOut(
         id=saved.id, template=saved.template, finding_name=saved.finding_name, input_summary=saved.input_summary,
         title=saved.title, summary=saved.summary, vulnerability_overview=saved.vulnerability_overview,
@@ -122,13 +122,13 @@ async def save_report(payload: ReportCreate, user=Depends(verify_firebase_token)
     )
 
 @app.get("/reports", response_model=list[ReportOut])
-async def get_reports(
+def get_reports(
     approved_only: bool = True,
     finding_name: Optional[str] = Query(None),
     template: Optional[Literal["one", "core"]] = Query(None),
     user=Depends(verify_firebase_token),
 ):
-    items = await list_reports(user_id=user["uid"], approved_only=approved_only, finding_name=finding_name, template=template)
+    items = list_reports(user_id=user["uid"], approved_only=approved_only, finding_name=finding_name, template=template)
     return [
         ReportOut(
             id=i.id, template=i.template, finding_name=i.finding_name, input_summary=i.input_summary,
@@ -139,4 +139,3 @@ async def get_reports(
         )
         for i in items
     ]
-

@@ -5,23 +5,38 @@ from typing import Optional, Literal, List
 
 from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 
 from .auth import verify_firebase_token
-from .db import init_db
+from .db import init_db, get_db
 from .llm import MistralLLM
 from .prompt_templates import get_prompt
 from .schemas import GenerateRequest, GenerationOut, ReportCreate, ReportOut, FindingTypeSummary
 from .crud import create_report, list_reports, types_summary
 from langchain_core.output_parsers import StrOutputParser
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = FastAPI(title="Pentest Report Generator")
 
+# ========================================
+# CORS Configuration - UPDATED FOR PRODUCTION
+# ========================================
+# Get allowed origins from environment variable or use defaults
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "https://findings-gen-ui.vercel.app,http://localhost:3000,http://localhost:5173"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,  # Specific origins instead of "*"
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],  # includes Authorization
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Be explicit
+    allow_headers=["*"],  # Or be specific: ["Content-Type", "Authorization"]
+    expose_headers=["*"],  # Allow frontend to read response headers
+    max_age=3600,  # Cache preflight requests for 1 hour
 )
 
 llm = MistralLLM()
@@ -42,9 +57,21 @@ FINDINGS_CATALOG = [
 
 @app.on_event("startup")
 def _startup():
+    """Initialize database on startup."""
     init_db()
 
+# Add a health check endpoint for debugging
+@app.get("/health")
+def health_check():
+    """Health check endpoint."""
+    return {
+        "status": "ok",
+        "cors_origins": ALLOWED_ORIGINS,
+        "message": "API is running"
+    }
+
 def _section(text: str, heading: str) -> str:
+    """Extract a section from generated text."""
     if heading not in text:
         return ""
     start = text.find(heading) + len(heading)
@@ -62,15 +89,22 @@ def _section(text: str, heading: str) -> str:
 
 @app.get("/findings", response_model=List[str])
 async def list_findings():
+    """Get list of all available finding types."""
     return FINDINGS_CATALOG
 
 @app.get("/reports/types", response_model=List[FindingTypeSummary])
-def get_types(approved_only: bool = True, user=Depends(verify_firebase_token)):
-    return types_summary(user_id=user["uid"], approved_only=approved_only)
+def get_types(
+    approved_only: bool = True,
+    user=Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """Get summary of finding types with counts."""
+    return types_summary(db=db, user_id=user["uid"], approved_only=approved_only)
 
 # ---------- PREVIEW ONLY ----------
 @app.post("/generate", response_model=GenerationOut)
 async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
+    """Generate a security finding report preview (not saved to database)."""
     prompt = get_prompt(req.template)
     chain = prompt | llm | parser
     try:
@@ -104,7 +138,12 @@ async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
 
 # ---------- SAVE ONLY WHEN APPROVED (no PoC stored) ----------
 @app.post("/reports", response_model=ReportOut)
-def save_report(payload: ReportCreate, user=Depends(verify_firebase_token)):
+def save_report(
+    payload: ReportCreate,
+    user=Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """Save an approved report to the database."""
     data = dict(
         template=payload.template, finding_name=payload.finding_name, input_summary=payload.input_summary,
         title=payload.title, summary=payload.summary, vulnerability_overview=payload.vulnerability_overview,
@@ -112,7 +151,7 @@ def save_report(payload: ReportCreate, user=Depends(verify_firebase_token)):
         description=payload.description, severity=payload.severity, suggested_fix=payload.suggested_fix,
         references=payload.references, approved=payload.approved, created_at=datetime.utcnow()
     )
-    saved = create_report(data, user_id=user["uid"])
+    saved = create_report(db=db, data=data, user_id=user["uid"])
     return ReportOut(
         id=saved.id, template=saved.template, finding_name=saved.finding_name, input_summary=saved.input_summary,
         title=saved.title, summary=saved.summary, vulnerability_overview=saved.vulnerability_overview,
@@ -127,8 +166,10 @@ def get_reports(
     finding_name: Optional[str] = Query(None),
     template: Optional[Literal["one", "core"]] = Query(None),
     user=Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
 ):
-    items = list_reports(user_id=user["uid"], approved_only=approved_only, finding_name=finding_name, template=template)
+    """Get list of reports with optional filtering."""
+    items = list_reports(db=db, user_id=user["uid"], approved_only=approved_only, finding_name=finding_name, template=template)
     return [
         ReportOut(
             id=i.id, template=i.template, finding_name=i.finding_name, input_summary=i.input_summary,

@@ -6,37 +6,31 @@ from typing import Optional, Literal, List
 from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-
+from .import models
 from .auth import verify_firebase_token
-from .db import init_db, get_db
+from .db import get_db,engine
 from .llm import MistralLLM
 from .prompt_templates import get_prompt
-from .schemas import GenerateRequest, GenerationOut, ReportCreate, ReportOut, FindingTypeSummary
+from .schemas import GenerateRequest, GenerationOut, ReportCreate, ReportOut, FindingTypeSummary,ApproveUserRequest,ApprovedUserOut
 from .crud import create_report, list_reports, types_summary
 from langchain_core.output_parsers import StrOutputParser
-from dotenv import load_dotenv
 
-load_dotenv()
+models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Pentest Report Generator")
 
 # ========================================
-# CORS Configuration - UPDATED FOR PRODUCTION
+# CORS Configuration - ALLOW ALL ORIGINS
 # ========================================
-# Get allowed origins from environment variable or use defaults
-ALLOWED_ORIGINS = os.getenv(
-    "ALLOWED_ORIGINS",
-    "https://findings-gen-ui.vercel.app,http://localhost:3000,http://localhost:5173"
-).split(",")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,  # Specific origins instead of "*"
+    allow_origins=["*"],  # Allow all origins. For production, specify allowed origins.
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Be explicit
-    allow_headers=["*"],  # Or be specific: ["Content-Type", "Authorization"]
-    expose_headers=["*"],  # Allow frontend to read response headers
-    max_age=3600,  # Cache preflight requests for 1 hour
+    allow_methods=[
+        "*"
+    ],  # Allow all methods. Specify methods if needed (e.g., ["GET", "POST"]).
+    allow_headers=["*"],  # Allow all headers. Specify headers if needed.
 )
 
 llm = MistralLLM()
@@ -55,20 +49,16 @@ FINDINGS_CATALOG = [
     "Sensitive Data Exposure",
 ]
 
-@app.on_event("startup")
-def _startup():
-    """Initialize database on startup."""
-    init_db()
-
 # Add a health check endpoint for debugging
 @app.get("/health")
-def health_check():
-    """Health check endpoint."""
+def health_check(user=Depends(verify_firebase_token)):
+    """Health check endpoint that also verifies user approval"""
     return {
         "status": "ok",
-        "cors_origins": ALLOWED_ORIGINS,
-        "message": "API is running"
+        "user": user.get("email"),
+        "message": "User is approved and authenticated"
     }
+
 
 def _section(text: str, heading: str) -> str:
     """Extract a section from generated text."""
@@ -180,3 +170,120 @@ def get_reports(
         )
         for i in items
     ]
+
+@app.get("/admin/pending-users", response_model=List[ApprovedUserOut])
+def list_pending_users(
+    user=Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """List all pending (inactive) users awaiting approval"""
+    # TODO: Add admin role check here
+    
+    users = db.query(models.ApprovedUser).filter(models.ApprovedUser.is_active == False).all()
+    return [
+        ApprovedUserOut(
+            id=u.id,
+            email=u.email,
+            firebase_uid=u.firebase_uid,
+            is_active=u.is_active,
+            approved_at=u.approved_at.isoformat() if u.approved_at else "",
+            approved_by=u.approved_by,
+            notes=u.notes
+        )
+        for u in users
+    ]
+
+@app.get("/admin/approved-users", response_model=List[ApprovedUserOut])
+def list_approved_users(
+    user=Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """List all approved (active) users"""
+    # TODO: Add admin role check here
+    
+    users = db.query(models.ApprovedUser).filter(models.ApprovedUser.is_active == True).all()
+    return [
+        ApprovedUserOut(
+            id=u.id,
+            email=u.email,
+            firebase_uid=u.firebase_uid,
+            is_active=u.is_active,
+            approved_at=u.approved_at.isoformat() if u.approved_at else "",
+            approved_by=u.approved_by,
+            notes=u.notes
+        )
+        for u in users
+    ]
+
+@app.post("/admin/approve-user")
+def approve_user(
+    req: ApproveUserRequest,
+    user=Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """Approve a pending user"""
+    # TODO: Add admin role check here
+    admin_email = user.get("email", "admin")
+    
+    approved_user = db.query(models.ApprovedUser).filter(models.ApprovedUser.email == req.email).first()
+    
+    if not approved_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if approved_user.is_active:
+        return {"message": f"User {req.email} is already approved"}
+    
+    approved_user.is_active = True
+    approved_user.approved_by = admin_email
+    approved_user.approved_at = datetime.utcnow()
+    if req.notes:
+        approved_user.notes = req.notes
+    
+    db.commit()
+    return {"message": f"User {req.email} approved successfully"}
+
+@app.post("/admin/revoke-user")
+def revoke_user(
+    req: ApproveUserRequest,
+    user=Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """Revoke access for an approved user"""
+    # TODO: Add admin role check here
+    
+    approved_user = db.query(models.ApprovedUser).filter(models.ApprovedUser.email == req.email).first()
+    
+    if not approved_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if not approved_user.is_active:
+        return {"message": f"User {req.email} is already inactive"}
+    
+    approved_user.is_active = False
+    if req.notes:
+        approved_user.notes = req.notes
+    
+    db.commit()
+    return {"message": f"User {req.email} access revoked successfully"}
+
+@app.delete("/admin/delete-user/{email}")
+def delete_user(
+    email: str,
+    user=Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """Permanently delete a user from approved list"""
+    # TODO: Add admin role check here
+    
+    approved_user = db.query(models.ApprovedUser).filter(models.ApprovedUser.email == email).first()
+    
+    if not approved_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    db.delete(approved_user)
+    db.commit()
+    return {"message": f"User {email} deleted successfully"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

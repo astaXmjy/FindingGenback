@@ -61,3 +61,17 @@ class FindingTypeSummary(BaseModel):  # sidebar
     finding_name: str
     total: int
     counts: Dict[str, int]  # {"one": 3, "core": 5}
+
+
+class ApproveUserRequest(BaseModel):
+    email: str
+    notes: Optional[str] = None
+
+class ApprovedUserOut(BaseModel):
+    id: int
+    email: str
+    firebase_uid: Optional[str]
+    is_active: bool
+    approved_at: str
+    approved_by: Optional[str]
+    notes: Optional[str]

@@ -32,4 +32,14 @@ class Report(Base):
 
     approved = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
- 
+
+class ApprovedUser(Base):
+    __tablename__ = "approved_users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    firebase_uid = Column(String(255), unique=True, nullable=True, index=True)  # Store UID after first login
+    is_active = Column(Boolean, default=False, nullable=False)  # Default False - needs approval
+    approved_at = Column(DateTime(timezone=True), server_default=func.now())
+    approved_by = Column(String(255))  # Admin who approved
+    notes = Column(Text)  # Optional notes about the user

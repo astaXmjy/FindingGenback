@@ -1,52 +1,63 @@
 # app/crud.py
 from typing import Optional, List, Dict, Any
-from sqlalchemy import select, func
+from sqlalchemy import func
+from sqlalchemy.orm import Session
 from .models import Report
-from .db import SessionLocal
 
-def create_report(data: Dict[str, Any], user_id: str) -> Report:
-    with SessionLocal() as session:
-        r = Report(user_id=user_id, **data)
-        session.add(r)
-        session.commit()
-        session.refresh(r)
-        return r
+
+def create_report(db: Session, data: Dict[str, Any], user_id: str) -> Report:
+    """Create a new report in the database."""
+    r = Report(user_id=user_id, **data)
+    db.add(r)
+    db.commit()
+    db.refresh(r)
+    return r
+
 
 def list_reports(
+    db: Session,
     user_id: str,
     approved_only: bool = True,
     finding_name: Optional[str] = None,
     template: Optional[str] = None,
     limit: int = 200
 ) -> List[Report]:
-    with SessionLocal() as session:
-        stmt = select(Report).where(Report.user_id == user_id).order_by(Report.created_at.desc()).limit(limit)
-        if approved_only:
-            stmt = stmt.where(Report.approved.is_(True))
-        if finding_name:
-            stmt = stmt.where(Report.finding_name == finding_name)
-        if template:
-            stmt = stmt.where(Report.template == template)
-        q = session.execute(stmt)
-        return q.scalars().all()
+    """List reports with optional filtering."""
+    # Start with base query
+    query = db.query(Report).filter(Report.user_id == user_id)
+    
+    # Apply all filters BEFORE limit/order_by
+    if approved_only:
+        query = query.filter(Report.approved.is_(True))
+    if finding_name:
+        query = query.filter(Report.finding_name == finding_name)
+    if template:
+        query = query.filter(Report.template == template)
+    
+    # Apply ordering and limit at the end
+    query = query.order_by(Report.created_at.desc()).limit(limit)
+    
+    return query.all()
 
-def types_summary(user_id: str, approved_only: bool = True) -> List[Dict[str, Any]]:
-    with SessionLocal() as session:
-        stmt = select(
-            Report.finding_name,
-            Report.template,
-            func.count(Report.id).label("cnt"),
-        ).where(Report.user_id == user_id).group_by(Report.finding_name, Report.template)
 
-        if approved_only:
-            stmt = stmt.where(Report.approved.is_(True))
+def types_summary(db: Session, user_id: str, approved_only: bool = True) -> List[Dict[str, Any]]:
+    """Get summary of finding types with counts."""
+    query = db.query(
+        Report.finding_name,
+        Report.template,
+        func.count(Report.id).label("cnt"),
+    ).filter(Report.user_id == user_id).group_by(Report.finding_name, Report.template)
 
-        rows = session.execute(stmt).all()
-        agg: Dict[str, Dict[str, Any]] = {}
-        for name, template, cnt in rows:
-            if name not in agg:
-                agg[name] = {"finding_name": name, "total": 0, "counts": {"one": 0, "core": 0}}
-            agg[name]["counts"][template] = agg[name]["counts"].get(template, 0) + int(cnt)
-            agg[name]["total"] += int(cnt)
+    if approved_only:
+        query = query.filter(Report.approved.is_(True))
 
-        return sorted(agg.values(), key=lambda x: x["total"], reverse=True)
+    rows = query.all()
+    agg: Dict[str, Dict[str, Any]] = {}
+    
+    for name, template, cnt in rows:
+        if name not in agg:
+            agg[name] = {"finding_name": name, "total": 0, "counts": {}}
+        agg[name]["counts"][template] = agg[name]["counts"].get(template, 0) + int(cnt)
+        agg[name]["total"] += int(cnt)
+
+    return sorted(agg.values(), key=lambda x: x["total"], reverse=True)

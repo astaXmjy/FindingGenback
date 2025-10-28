@@ -53,7 +53,7 @@ def types_summary(db: Session, user_id: str, approved_only: bool = True) -> List
 
     rows = query.all()
     agg: Dict[str, Dict[str, Any]] = {}
-    
+
     for name, template, cnt in rows:
         if name not in agg:
             agg[name] = {"finding_name": name, "total": 0, "counts": {}}
@@ -61,3 +61,13 @@ def types_summary(db: Session, user_id: str, approved_only: bool = True) -> List
         agg[name]["total"] += int(cnt)
 
     return sorted(agg.values(), key=lambda x: x["total"], reverse=True)
+
+
+def delete_report(db: Session, report_id: int, user_id: str) -> bool:
+    """Delete a report if owned by the user."""
+    report = db.query(Report).filter(Report.id == report_id, Report.user_id == user_id).first()
+    if report:
+        db.delete(report)
+        db.commit()
+        return True
+    return False

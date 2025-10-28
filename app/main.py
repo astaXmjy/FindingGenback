@@ -12,7 +12,7 @@ from .db import get_db,engine
 from .llm import MistralLLM
 from .prompt_templates import get_prompt
 from .schemas import GenerateRequest, GenerationOut, ReportCreate, ReportOut, FindingTypeSummary,ApproveUserRequest,ApprovedUserOut
-from .crud import create_report, list_reports, types_summary
+from .crud import create_report, list_reports, types_summary, delete_report
 from langchain_core.output_parsers import StrOutputParser
 
 models.Base.metadata.create_all(bind=engine)
@@ -103,6 +103,7 @@ async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
         raise HTTPException(status_code=500, detail=f"LLM error: {e}")
 
     title = req.finding_name
+    print(req.finding_name)
     summary = _section(raw, "## Summary")
     references = _section(raw, "## References")
     poc = _section(raw, "## Proof of concept")
@@ -170,6 +171,18 @@ def get_reports(
         )
         for i in items
     ]
+
+@app.delete("/reports/{report_id}")
+def delete_report_endpoint(
+    report_id: int,
+    user=Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """Delete a report if owned by the authenticated user."""
+    success = delete_report(db=db, report_id=report_id, user_id=user["uid"])
+    if not success:
+        raise HTTPException(status_code=404, detail="Report not found or not owned by user")
+    return {"message": "Report deleted successfully"}
 
 @app.get("/admin/pending-users", response_model=List[ApprovedUserOut])
 def list_pending_users(

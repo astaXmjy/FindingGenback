@@ -2,7 +2,8 @@
 import os
 from datetime import datetime
 from typing import Optional, Literal, List
-
+from .output_schemas import TemplateOneOutput, TemplateCoreOutput
+from .prompt_templates import get_prompt_structured
 from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -10,7 +11,6 @@ from .import models
 from .auth import verify_firebase_token
 from .db import get_db,engine
 from .llm import MistralLLM
-from .prompt_templates import get_prompt
 from .schemas import GenerateRequest, GenerationOut, ReportCreate, ReportOut, FindingTypeSummary,ApproveUserRequest,ApprovedUserOut
 from .crud import create_report, list_reports, types_summary, delete_report
 from langchain_core.output_parsers import StrOutputParser
@@ -91,41 +91,77 @@ def get_types(
     """Get summary of finding types with counts."""
     return types_summary(db=db, user_id=user["uid"], approved_only=approved_only)
 
-# ---------- PREVIEW ONLY ----------
+
 @app.post("/generate", response_model=GenerationOut)
 async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
     """Generate a security finding report preview (not saved to database)."""
-    prompt = get_prompt(req.template)
-    chain = prompt | llm | parser
     try:
-        raw = chain.invoke({"finding_name": req.finding_name, "additional_context": req.additional_context or ""})
+        # Get structured prompt
+        prompt = get_prompt_structured(req.template)
+        
+        # Prepare context
+        context = {
+            "finding_name": req.finding_name,
+            "additional_context": req.additional_context or "No additional context provided"
+        }
+        
+        # Format prompt
+        formatted_prompt = prompt.format(**context)
+        
+        # Select appropriate schema
+        schema = TemplateOneOutput if req.template == "one" else TemplateCoreOutput
+        
+        # Generate structured output
+        result = llm.generate_structured(formatted_prompt, schema)
+        
+        # Log for debugging
+        print(f"✅ Generated structured report for: {req.finding_name}")
+        print(f"📋 Template: {req.template}")
+        
+        # Convert to response format
+        if req.template == "one":
+            return GenerationOut(
+                template=req.template,
+                finding_name=req.finding_name,
+                input_summary=req.additional_context,
+                title=result.title,
+                summary=result.summary,
+                vulnerability_overview=result.vulnerability_overview,
+                finding_details=result.finding_details,
+                impacts=result.impacts,
+                recommendations="\n".join(f"{i+1}. {rec}" for i, rec in enumerate(result.recommendations)),
+                description=None,
+                severity=None,
+                suggested_fix=None,
+                references="\n".join(result.references),
+                proof_of_concept="\n".join(f"{i+1}. {step}" for i, step in enumerate(result.proof_of_concept))
+            )
+        else:
+            return GenerationOut(
+                template=req.template,
+                finding_name=req.finding_name,
+                input_summary=req.additional_context,
+                title=result.title,
+                summary=result.summary,
+                vulnerability_overview=None,
+                finding_details=None,
+                impacts=None,
+                recommendations=None,
+                description=result.description,
+                severity=result.severity,
+                suggested_fix=result.suggested_fix,
+                references="\n".join(result.references),
+                proof_of_concept="\n".join(f"{i+1}. {step}" for i, step in enumerate(result.proof_of_concept))
+            )
+        
+    except ValueError as e:
+        # Schema validation or JSON parsing error
+        print(f"❌ Validation Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Invalid response format: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"LLM error: {e}")
-
-    title = req.finding_name
-    print(req.finding_name)
-    summary = _section(raw, "## Summary")
-    references = _section(raw, "## References")
-    poc = _section(raw, "## Proof of concept")
-
-    if req.template == "one":
-        vo = _section(raw, "## Vulnerability Overview")
-        fd = _section(raw, "## Finding Details")
-        impacts = _section(raw, "## Impacts")
-        recs = _section(raw, "## Recommendations")
-        desc = sev = fix = None
-    else:
-        desc = _section(raw, "## Description")
-        sev = _section(raw, "## Severity")
-        fix = _section(raw, "## Suggested fix")
-        vo = fd = impacts = recs = None
-
-    return GenerationOut(
-        template=req.template, finding_name=req.finding_name, input_summary=req.additional_context,
-        title=title, summary=summary, vulnerability_overview=vo, finding_details=fd,
-        impacts=impacts, recommendations=recs, description=desc, severity=sev, suggested_fix=fix,
-        references=references, proof_of_concept=poc,
-    )
+        print(f"❌ LLM Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+    
 
 # ---------- SAVE ONLY WHEN APPROVED (no PoC stored) ----------
 @app.post("/reports", response_model=ReportOut)

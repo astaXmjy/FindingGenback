@@ -1,83 +1,130 @@
 from langchain_core.prompts import PromptTemplate
 
-TEMPLATE_ONE = """
-You are an expert penetration testing report writer. When given a finding name (and optionally supporting notes or evidence), produce a single, professional finding entry in valid *Markdown* using the exact headings and order below. Write in a concise, technical, professional tone suitable for inclusion in an executive/technical pentest report. Do not add, remove, or rename sections.
+TEMPLATE_ONE_STRUCTURED = """Generate a professional penetration testing finding report.
 
-# [Finding Title]
+Finding Name: {finding_name}
+Additional Context: {additional_context}
 
-## Summary
-- Provide a concise 1–2 sentence summary of the finding.
+Generate a complete security finding report with:
 
-## Vulnerability Overview
-- Provide a general description of the vulnerability class (OWASP-style). This paragraph must describe the vulnerability type in general (how it works, common causes, general attack vectors), not the specific instance found.
+1. TITLE: Use the finding name as-is
 
-## Finding Details
-- Provide a brief, professional overview of the specific issue: what was found, where it was found, and the contextual risk.
-- Include concise bullet points for root cause and observed evidence (affected components/endpoints, configuration issues, sample artifacts). If you invent or infer any data, mark it as *(Assumption: …)*.
+2. SUMMARY: 1-2 sentences describing what was found
 
-## Impacts
-- One paragraph describing the security and business impact: how an attacker could exploit the issue, what access or damage it could enable, and any broader implications (data leakage, supply chain risk, regulatory exposure). Keep to a single paragraph.
+3. VULNERABILITY OVERVIEW: 
+   - General description of this vulnerability class
+   - How it works in applications
+   - Common causes and attack vectors
+   - Why it's dangerous
+   (150-250 words, educational tone)
 
-## Recommendations
-- Provide *5–7* detailed, actionable remediation bullets. Each bullet must:
-  - Start with a strong imperative verb (e.g., “Implement,” “Disable,” “Validate,” “Rotate”).
-  - Be specific and practical (include configuration settings, header names, example limits, recommended library versions, or testing/validation steps where applicable).
-  - Include both immediate mitigations and longer-term fixes when relevant.
+4. FINDING DETAILS:
+   - Specific technical details of what was discovered
+   - Where it was found (endpoints, parameters, components)
+   - Root cause analysis
+   - Observable evidence
+   (150-300 words, incorporate additional context if provided)
 
-## Proof of concept
-1. Provide clear, step-by-step reproduction instructions sufficient to validate the finding.
-2. Keep steps concise and non-destructive. Include example curl commands, HTTP request/response snippets, or Burp evidence where relevant. Do not include destructive commands.
+5. IMPACTS:
+   - How attackers could exploit this
+   - What access/damage is possible
+   - Business consequences
+   - Compliance/regulatory risks
+   (One paragraph, 100-200 words)
 
-## References
-- Provide authoritative links (OWASP, PortSwigger, CWE, CVEs, vendor documentation, or reputable blog posts). Use Markdown link format.
+6. RECOMMENDATIONS:
+   Provide exactly 5-7 actionable remediation steps. Each MUST:
+   - Start with action verb (Implement, Configure, Validate, etc.)
+   - Be specific with technical details
+   - Include configuration examples or code patterns
+   - Be immediately actionable
 
-Additional rules:
-- Preserve placeholders (e.g., {{COMPANY_NAME}}) as-is unless a concrete value is provided.
-- If required information is missing, make a reasonable assumption and mark it: *(Assumption: …)*.
-- Do not invent evidence. Any inferred details must be explicitly labeled as assumptions.
-- Do not include unrelated findings or extra sections.
-- Maintain consistent, professional, technical phrasing throughout.
-- Ensure output is valid Markdown and ready for inclusion in the final report.
-- Do not include destructive or illegal instructions.
+7. PROOF OF CONCEPT:
+   Provide exactly 4-6 clear reproduction steps:
+   - Include prerequisites if needed
+   - Show exact commands/requests
+   - Describe expected results
+   - Keep ethical and non-destructive
+
+8. REFERENCES:
+   Provide exactly 4-7 authoritative links:
+   - OWASP resources
+   - PortSwigger articles
+   - CWE/CVE entries
+   - Vendor documentation
+   Format: [Link Title](https://actual-url.com)
+
+Be concise, professional, and technically accurate. Focus on quality over length.
 """
 
-TEMPLATE_CORE = """
-You are a senior security engineer and technical writer. Produce a pentest finding using the "template2 (core)" format below.
+TEMPLATE_CORE_STRUCTURED = """Generate a professional security finding report.
 
-Input:
-- finding_name: {finding_name}
-- additional_context: {additional_context}
+Finding Name: {finding_name}
+Additional Context: {additional_context}
 
-Output format (use these headings and sections exactly):
+Generate a complete security finding report with:
 
-# [Finding Title]
+1. TITLE: Use the finding name as-is
 
-## Summary
-Concise summary for the finding.
+2. SUMMARY: 2-3 sentences describing what was found and why it matters
 
-## Description
-Brief overview of the issue, what was found, where it was found, and the potential risk in context. This is written in a professional, explanatory tone.
+3. DESCRIPTION:
+   Write 2-3 paragraphs (300-500 words total):
+   - Paragraph 1: Specific technical details of what was found
+   - Paragraph 2: General explanation of this vulnerability type
+   - Paragraph 3: Risk context for this specific application
 
-Add about the vulnerability
+4. SEVERITY:
+   Write 1-2 paragraphs (150-300 words) covering:
+   - Direct security impact and exploitation scenarios
+   - Business and compliance consequences
+   - Severity rating (Critical/High/Medium/Low) with justification
 
-## Severity
-Explanation of the security impact, detailing how an attacker might exploit the issue, what kind of access or damage it could lead to, and any broader implications (e.g., data leaks, supply chain risks). Keep this to a single paragraph.
+5. SUGGESTED FIX:
+   Comprehensive remediation guidance (300-500 words) organized as:
+   
+   **Immediate Actions (Short-term mitigations):**
+   1. [Specific mitigation step]
+   2. [Another mitigation]
+   
+   **Permanent Fixes (Long-term solutions):**
+   1. [Detailed fix with technical specifics]
+   2. [Architecture changes needed]
+   3. [Security controls to implement]
+   
+   **Additional Security Measures:**
+   1. [Defense-in-depth controls]
+   2. [Monitoring mechanisms]
+   3. [Testing procedures]
+   
+   (Provide all content as a single formatted string, not as separate lists)
 
-## Suggested fix
-Recommended actions to remediate the issue. Provide very detailed, actionable remediation steps (configuration changes, code-level guidance, compensating controls, testing/validation steps).
+6. PROOF OF CONCEPT:
+   Provide exactly 4-6 detailed steps with:
+   - Prerequisites listed
+   - Exact commands/requests
+   - Expected vs actual results
+   - Clear validation of the vulnerability
 
-## Proof of concept
-1. Clear, step-by-step instructions to reproduce the issue or observe the vulnerable behavior.
-2. Keep steps brief but sufficient to validate the finding (include sample curl commands, HTTP requests/responses, or Burp snippets where relevant). Do not include destructive commands.
+7. REFERENCES:
+   Provide exactly 5-8 authoritative links organized by category:
+   - OWASP resources
+   - Industry standards (CWE, NIST)
+   - Technical documentation
+   - Additional reading
+   Format: [Link Title](https://actual-url.com)
 
-## References
-- Links to authoritative resources such as OWASP, PortSwigger, CWE, CVEs, vendor documentation, or other reputable sources.
+Be technical, concise, and actionable. Quality over quantity.
 """
 
-PROMPT_ONE = PromptTemplate.from_template(TEMPLATE_ONE)
-PROMPT_CORE = PromptTemplate.from_template(TEMPLATE_CORE)
+PROMPT_ONE_STRUCTURED = PromptTemplate.from_template(TEMPLATE_ONE_STRUCTURED)
+PROMPT_CORE_STRUCTURED = PromptTemplate.from_template(TEMPLATE_CORE_STRUCTURED)
 
-def get_prompt(template_key: str) -> PromptTemplate:
+def get_prompt_structured(template_key: str) -> PromptTemplate:
+    """Get structured prompt template"""
     if template_key == "one":
-        return PROMPT_ONE
-    return PROMPT_CORE
+        return PROMPT_ONE_STRUCTURED
+    elif template_key == "core":
+        return PROMPT_CORE_STRUCTURED
+    else:
+        raise ValueError(f"Invalid template key: {template_key}")

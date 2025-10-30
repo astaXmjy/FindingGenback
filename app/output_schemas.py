@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 
 class TemplateOneOutput(BaseModel):
@@ -7,85 +7,103 @@ class TemplateOneOutput(BaseModel):
     title: str = Field(description="Finding title/name")
     
     summary: str = Field(
-        description="Concise 1-2 sentence summary of the finding",
-        min_length=50,
-        max_length=300
-    )
-    
-    vulnerability_overview: str = Field(
-        description="General description of vulnerability class (OWASP-style), 150-250 words",
-        min_length=200,
-        max_length=600
-    )
-    
-    finding_details: str = Field(
-        description="Specific issue details with root cause and evidence, 150-300 words",
-        min_length=200,
-        max_length=800
-    )
-    
-    impacts: str = Field(
-        description="Security and business impact in one paragraph, 100-200 words",
-        min_length=150,
+        description="Professional 2-3 sentence summary clearly explaining what vulnerability was found, where, and its potential impact. Should be understandable by both technical and non-technical stakeholders.",
+        min_length=100,
         max_length=500
     )
     
+    vulnerability_overview: str = Field(
+        description="Comprehensive general description of this vulnerability class. Explain: What this vulnerability type is, How it works technically, Common attack vectors and exploitation methods, Why it's dangerous, Industry context (OWASP/CWE references). Target: 800-1200 characters for professional depth.",
+        min_length=800,
+        max_length=1500
+    )
+    
+    finding_details: str = Field(
+        description="Detailed technical analysis of the specific vulnerability discovered. Include: Precise location (endpoints, parameters, components), Root cause analysis (why it exists), Technical details of the weakness, Observable evidence and artifacts, How additional context relates to the finding. Target: 1000-1500 characters for thorough documentation.",
+        min_length=1000,
+        max_length=2000
+    )
+    
+    impacts: str = Field(
+        description="Comprehensive impact analysis covering: Attack scenarios and exploitation possibilities, CIA triad impact (Confidentiality, Integrity, Availability), Business consequences (financial, operational, reputational), Compliance and legal implications (GDPR, PCI-DSS, etc.), Data or systems at risk. Target: 800-1200 characters for professional risk assessment.",
+        min_length=800,
+        max_length=1500
+    )
+    
     recommendations: List[str] = Field(
-        description="5-7 detailed, actionable remediation steps",
+        description="Exactly 6-8 detailed, actionable remediation steps prioritized by effectiveness. Each recommendation MUST: Start with a strong action verb (Implement, Configure, Validate, Deploy, Enable, Enforce), Provide specific technical details and configuration examples, Include code snippets or exact settings where applicable, Be immediately actionable by development/security teams, Reference security best practices or standards. Each item should be 150-300 characters for professional detail.",
+        min_items=6,
+        max_items=8
+    )
+    
+    proof_of_concept: List[str] = Field(
+        description="Exactly 5-7 detailed, reproducible steps demonstrating the vulnerability. Include: Prerequisites and initial setup, Exact commands/requests with parameters, Expected vs actual behavior, Validation of successful exploitation, Screenshots or output descriptions where relevant. Each step should be 150-300 characters. Must be ethical and non-destructive.",
         min_items=5,
         max_items=7
     )
     
-    proof_of_concept: List[str] = Field(
-        description="4-6 clear reproduction steps",
-        min_items=4,
-        max_items=6
-    )
-    
     references: List[str] = Field(
-        description="4-7 authoritative links in format: [Title](URL)",
-        min_items=4,
-        max_items=7
+        description="Exactly 6-8 authoritative reference links from diverse sources. Include: OWASP resources (Testing Guide, ASVS, Cheat Sheets), PortSwigger Web Security Academy articles, CWE/CVE database entries, NIST guidelines, Vendor documentation, Security research papers. Format: [Descriptive Title](https://actual-url.com). Ensure URLs are real and functional.",
+        min_items=6,
+        max_items=8
     )
+
+    @field_validator('recommendations', 'proof_of_concept', 'references')
+    def validate_list_quality(cls, v, info):
+        """Ensure list items have substance"""
+        field_name = info.field_name
+        for item in v:
+            if len(item.strip()) < 30:
+                raise ValueError(f"{field_name} items must be substantial (minimum 30 characters each)")
+        return v
 
 
 class TemplateCoreOutput(BaseModel):
-    """Structured output for Template 2 - Core format"""
+    """Structured output for Template 2 - Core comprehensive format"""
     
     title: str = Field(description="Finding title/name")
     
     summary: str = Field(
-        description="Concise 2-3 sentence summary",
-        min_length=50,
-        max_length=300
+        description="Executive summary in 3-4 sentences covering: What was found, Where it was found, Why it matters, Overall risk level. Should clearly communicate severity to stakeholders.",
+        min_length=150,
+        max_length=600
     )
     
     description: str = Field(
-        description="Comprehensive technical description in 2-3 paragraphs, 300-500 words",
-        min_length=400,
-        max_length=1200
+        description="Comprehensive technical description organized in multiple paragraphs: PARAGRAPH 1 (Specific Finding): Detailed technical explanation of what was discovered, exact location, affected components, root cause analysis. PARAGRAPH 2 (Vulnerability Context): General explanation of this vulnerability class, how it works, common attack patterns. PARAGRAPH 3 (Application Context): Risk specific to this application/environment, data at risk, attack surface analysis. PARAGRAPH 4 (Technical Details): Additional technical depth, edge cases, related weaknesses. Target: 2000-3000 characters for thorough professional documentation.",
+        min_length=2000,
+        max_length=3500
     )
     
     severity: str = Field(
-        description="Detailed impact analysis in 1-2 paragraphs with severity rating, 150-300 words",
-        min_length=200,
-        max_length=700
+        description="Detailed severity and impact analysis in multiple paragraphs: PARAGRAPH 1 (Technical Impact): Direct security consequences, CIA triad analysis, exploitability assessment. PARAGRAPH 2 (Business Impact): Operational disruption, financial losses, reputational damage, compliance violations. PARAGRAPH 3 (Risk Rating): Clear severity rating (Critical/High/Medium/Low) with CVSS-style justification explaining each factor. Target: 1200-1800 characters for comprehensive risk assessment.",
+        min_length=1200,
+        max_length=2000
     )
     
     suggested_fix: str = Field(
-        description="Comprehensive remediation guidance organized in sections (Immediate Actions, Permanent Fixes, Additional Measures), 300-500 words",
-        min_length=400,
-        max_length=1200
+        description="Comprehensive remediation guidance organized in clear sections with detailed implementation guidance: IMMEDIATE ACTIONS (Short-term mitigations): 3-4 urgent mitigation steps with exact configurations. PERMANENT FIXES (Long-term solutions): 4-5 comprehensive remediation steps with code examples and architecture changes. VALIDATION: Testing procedures to verify fixes. PREVENTION: Security controls to prevent recurrence. Format as structured text with clear section headers. Target: 2000-3000 characters for actionable professional guidance.",
+        min_length=2000,
+        max_length=3500
     )
     
     proof_of_concept: List[str] = Field(
-        description="4-6 detailed reproduction steps with commands",
-        min_items=4,
-        max_items=6
-    )
-    
-    references: List[str] = Field(
-        description="5-8 authoritative links in format: [Title](URL)",
+        description="Exactly 5-8 detailed, reproducible steps with technical precision. Include: Environment setup and prerequisites, Exact HTTP requests/commands with full parameters, Expected vs actual responses, Validation criteria, Impact demonstration. Each step should be 150-300 characters with technical accuracy. Must remain ethical and non-destructive.",
         min_items=5,
         max_items=8
     )
+    
+    references: List[str] = Field(
+        description="Exactly 7-10 authoritative references organized by category. Include: OWASP resources (Top 10, Testing Guide, ASVS), Industry standards (CWE, NIST, ISO 27001), Technical documentation (RFCs, vendor guides), Academic research and whitepapers, Security tools and resources. Format: [Descriptive Title](https://actual-url.com). Prioritize official and authoritative sources.",
+        min_items=7,
+        max_items=10
+    )
+
+    @field_validator('proof_of_concept', 'references')
+    def validate_list_quality(cls, v, info):
+        """Ensure list items have substance"""
+        field_name = info.field_name
+        for item in v:
+            if len(item.strip()) < 30:
+                raise ValueError(f"{field_name} items must be substantial (minimum 30 characters each)")
+        return v

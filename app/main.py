@@ -94,8 +94,16 @@ def get_types(
 
 @app.post("/generate", response_model=GenerationOut)
 async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
-    """Generate a security finding report preview (not saved to database)."""
+    """Generate a comprehensive security finding report preview (not saved to database)."""
     try:
+        print(f"\n{'='*80}")
+        print(f"🔍 Starting report generation")
+        print(f"Finding: {req.finding_name}")
+        print(f"Template: {req.template}")
+        print(f"User: {user.get('email', 'unknown')}")
+        print(f"Context length: {len(req.additional_context or '')} characters")
+        print(f"{'='*80}\n")
+        
         # Get structured prompt
         prompt = get_prompt_structured(req.template)
         
@@ -107,16 +115,36 @@ async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
         
         # Format prompt
         formatted_prompt = prompt.format(**context)
+        print(f"📝 Prompt length: {len(formatted_prompt)} characters")
         
         # Select appropriate schema
         schema = TemplateOneOutput if req.template == "one" else TemplateCoreOutput
+        print(f"📋 Using schema: {schema.__name__}")
         
-        # Generate structured output
-        result = llm.generate_structured(formatted_prompt, schema)
+        # Generate structured output with retry logic
+        print(f"🤖 Generating report with Mistral AI...")
+        result = llm.generate_structured(formatted_prompt, schema, max_attempts=3)
         
-        # Log for debugging
-        print(f"✅ Generated structured report for: {req.finding_name}")
-        print(f"📋 Template: {req.template}")
+        # Log success and stats
+        print(f"\n{'='*80}")
+        print(f"✅ Successfully generated comprehensive report!")
+        print(f"📊 Report Statistics:")
+        if req.template == "one":
+            print(f"  - Summary: {len(result.summary)} chars")
+            print(f"  - Vulnerability Overview: {len(result.vulnerability_overview)} chars")
+            print(f"  - Finding Details: {len(result.finding_details)} chars")
+            print(f"  - Impacts: {len(result.impacts)} chars")
+            print(f"  - Recommendations: {len(result.recommendations)} items")
+            print(f"  - Proof of Concept: {len(result.proof_of_concept)} steps")
+            print(f"  - References: {len(result.references)} links")
+        else:
+            print(f"  - Summary: {len(result.summary)} chars")
+            print(f"  - Description: {len(result.description)} chars")
+            print(f"  - Severity: {len(result.severity)} chars")
+            print(f"  - Suggested Fix: {len(result.suggested_fix)} chars")
+            print(f"  - Proof of Concept: {len(result.proof_of_concept)} steps")
+            print(f"  - References: {len(result.references)} links")
+        print(f"{'='*80}\n")
         
         # Convert to response format
         if req.template == "one":
@@ -156,11 +184,62 @@ async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
         
     except ValueError as e:
         # Schema validation or JSON parsing error
-        print(f"❌ Validation Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Invalid response format: {str(e)}")
+        error_detail = str(e)
+        print(f"\n{'='*80}")
+        print(f"❌ VALIDATION ERROR")
+        print(f"Error: {error_detail[:500]}")
+        print(f"{'='*80}\n")
+        
+        # Provide user-friendly error message
+        if "min_length" in error_detail.lower():
+            user_msg = "Report generation produced content that was too short. Please try again or provide more context."
+        elif "max_length" in error_detail.lower():
+            user_msg = "Report generation produced content that was too long. Please try again."
+        elif "json" in error_detail.lower():
+            user_msg = "Failed to parse AI response. This is usually temporary - please try again."
+        else:
+            user_msg = "Report validation failed. Please try again."
+        
+        raise HTTPException(
+            status_code=500, 
+            detail=f"{user_msg} (Technical details: {error_detail[:200]})"
+        )
+    
+    except RuntimeError as e:
+        # API or network errors
+        error_detail = str(e)
+        print(f"\n{'='*80}")
+        print(f"❌ RUNTIME ERROR")
+        print(f"Error: {error_detail}")
+        print(f"{'='*80}\n")
+        
+        if "rate limit" in error_detail.lower() or "429" in error_detail:
+            user_msg = "API rate limit reached. Please wait a moment and try again."
+        elif "timeout" in error_detail.lower():
+            user_msg = "Request timed out. The report generation is taking longer than expected. Please try again."
+        elif "network" in error_detail.lower() or "connection" in error_detail.lower():
+            user_msg = "Network connection error. Please check your connection and try again."
+        else:
+            user_msg = "Report generation failed. Please try again."
+        
+        raise HTTPException(
+            status_code=503,
+            detail=f"{user_msg} (Technical details: {error_detail[:200]})"
+        )
+    
     except Exception as e:
-        print(f"❌ LLM Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
+        # Unexpected errors
+        error_detail = str(e)
+        print(f"\n{'='*80}")
+        print(f"❌ UNEXPECTED ERROR")
+        print(f"Type: {type(e).__name__}")
+        print(f"Error: {error_detail}")
+        print(f"{'='*80}\n")
+        
+        raise HTTPException(
+            status_code=500, 
+            detail=f"An unexpected error occurred during report generation. Please try again. (Error: {error_detail[:200]})"
+        )
     
 
 # ---------- SAVE ONLY WHEN APPROVED (no PoC stored) ----------

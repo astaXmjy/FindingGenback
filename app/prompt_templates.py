@@ -12,11 +12,10 @@ Generate a complete security finding report with:
 2. SUMMARY: 1-2 sentences describing what was found
 
 3. VULNERABILITY OVERVIEW: 
-   - General description of this vulnerability class
-   - How it works in applications
-   - Common causes and attack vectors
+   - Concise general description of this vulnerability class
+   - How it works and common attack vectors
    - Why it's dangerous
-   (150-250 words, educational tone)
+   (CRITICAL: Maximum 500 characters - be extremely concise)
 
 4. FINDING DETAILS:
    - Specific technical details of what was discovered
@@ -28,9 +27,8 @@ Generate a complete security finding report with:
 5. IMPACTS:
    - How attackers could exploit this
    - What access/damage is possible
-   - Business consequences
-   - Compliance/regulatory risks
-   (One paragraph, 100-200 words)
+   - Business and compliance consequences
+   (CRITICAL: Maximum 400 characters - be very concise)
 
 6. RECOMMENDATIONS:
    Provide exactly 5-7 actionable remediation steps. Each MUST:

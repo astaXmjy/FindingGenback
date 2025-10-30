@@ -48,9 +48,10 @@ class MistralLLM(LLM):
                     "role": "system",
                     "content": (
                         "You are a senior penetration tester and security researcher. "
-                        "You write professional, detailed vulnerability reports following industry standards. "
+                        "You write professional, compact vulnerability reports following industry standards. "
                         "You MUST respond with valid JSON matching the exact schema provided. "
-                        "Be concise but thorough - provide technical depth without unnecessary verbosity."
+                        "CRITICAL: Strictly respect all character limits (max_length) - violating them will cause errors. "
+                        "Be concise and precise - prioritize quality over quantity."
                     )
                 },
                 {
@@ -128,9 +129,10 @@ CRITICAL RULES:
 - Output ONLY valid JSON, no markdown, no explanations
 - Include ALL required fields
 - Follow field descriptions for content guidelines
-- Keep responses concise but professional
+- Keep responses compact and professional - quality over quantity
 - For list fields, provide exactly the number of items specified in min_items/max_items
-- For string fields, stay within min_length/max_length constraints
+- For string fields, STRICTLY stay within max_length CHARACTER LIMITS (not words) - this is mandatory
+- Character limits are HARD LIMITS - exceeding them will cause validation failures
 """
         
         # Generate response

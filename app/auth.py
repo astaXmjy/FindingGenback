@@ -73,6 +73,10 @@ async def verify_firebase_token(
             approved_user.firebase_uid = uid
             db.commit()
         
+        # Add user info to decoded token
+        decoded_token["db_user_id"] = approved_user.id
+        decoded_token["role"] = approved_user.role or "user"
+        
         return decoded_token
         
     except HTTPException:

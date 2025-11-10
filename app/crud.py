@@ -63,6 +63,19 @@ def types_summary(db: Session, user_id: str, approved_only: bool = True) -> List
     return sorted(agg.values(), key=lambda x: x["total"], reverse=True)
 
 
+def update_report(db: Session, report_id: int, data: Dict[str, Any], user_id: str) -> Optional[Report]:
+    """Update a report if owned by the user."""
+    report = db.query(Report).filter(Report.id == report_id, Report.user_id == user_id).first()
+    if report:
+        for key, value in data.items():
+            if hasattr(report, key):
+                setattr(report, key, value)
+        db.commit()
+        db.refresh(report)
+        return report
+    return None
+
+
 def delete_report(db: Session, report_id: int, user_id: str) -> bool:
     """Delete a report if owned by the user."""
     report = db.query(Report).filter(Report.id == report_id, Report.user_id == user_id).first()

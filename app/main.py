@@ -1,19 +1,17 @@
 # app/main.py
-import os
 from datetime import datetime
 from typing import Optional, Literal, List
-from .output_schemas import TemplateOneOutput, TemplateCoreOutput
-from .prompt_templates import get_prompt_structured
 from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from .import models
 from .auth import verify_firebase_token
 from .db import get_db,engine
-from .llm import MistralLLM
-from .schemas import GenerateRequest, GenerationOut, ReportCreate, ReportOut, FindingTypeSummary,ApproveUserRequest,ApprovedUserOut
-from .crud import create_report, list_reports, types_summary, delete_report
-from langchain_core.output_parsers import StrOutputParser
+from .llm import get_openai_llm_with_structured_output, create_structured_prompt
+from .schemas import GenerateRequest, GenerationOut, ReportCreate, ReportOut, ReportUpdate, FindingTypeSummary,ApproveUserRequest,ApprovedUserOut
+from .output_schemas import TemplateOneOutput, TemplateCoreOutput
+from .prompt_templates import get_prompt_structured
+from .crud import create_report, list_reports, types_summary, update_report, delete_report
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -27,14 +25,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allow all origins. For production, specify allowed origins.
     allow_credentials=True,
-    allow_methods=[
-        "*"
-    ],  # Allow all methods. Specify methods if needed (e.g., ["GET", "POST"]).
-    allow_headers=["*"],  # Allow all headers. Specify headers if needed.
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-
-llm = MistralLLM()
-parser = StrOutputParser()
 
 FINDINGS_CATALOG = [
     "Account Takeover via Mobile Number",
@@ -56,26 +49,178 @@ def health_check(user=Depends(verify_firebase_token)):
     return {
         "status": "ok",
         "user": user.get("email"),
+        "role": user.get("role", "user"),
         "message": "User is approved and authenticated"
     }
 
+# ========================================
+# Admin Endpoints
+# ========================================
 
-def _section(text: str, heading: str) -> str:
-    """Extract a section from generated text."""
-    if heading not in text:
-        return ""
-    start = text.find(heading) + len(heading)
-    end = len(text)
-    heads = [
-        "\n## Summary","\n## Vulnerability Overview","\n## Finding Details","\n## Impacts",
-        "\n## Recommendations","\n## Description","\n## Severity","\n## Suggested fix",
-        "\n## Proof of concept","\n## References","\n# "
-    ]
-    for h in heads:
-        i = text.find(h, start)
-        if i != -1:
-            end = min(end, i)
-    return text[start:end].strip()
+@app.get("/admin/users", response_model=List[ApprovedUserOut])
+async def admin_list_users(
+    user: dict = Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """List all users (admin only)"""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    users = db.query(models.ApprovedUser).all()
+    return users
+
+@app.put("/admin/users/{user_id}")
+async def admin_update_user(
+    user_id: int,
+    is_active: Optional[bool] = None,
+    role: Optional[str] = None,
+    notes: Optional[str] = None,
+    user: dict = Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """Update user (admin only)"""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    db_user = db.query(models.ApprovedUser).filter(models.ApprovedUser.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if is_active is not None:
+        db_user.is_active = is_active
+    if role is not None:
+        if role not in ["user", "reviewer", "admin"]:
+            raise HTTPException(status_code=400, detail="Invalid role")
+        db_user.role = role
+    if notes is not None:
+        db_user.notes = notes
+    
+    db_user.approved_by = user.get("email")
+    db.commit()
+    db.refresh(db_user)
+    
+    return {"message": "User updated successfully", "user": db_user}
+
+@app.delete("/admin/users/{user_id}")
+async def admin_delete_user(
+    user_id: int,
+    user: dict = Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """Delete user (admin only)"""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    db_user = db.query(models.ApprovedUser).filter(models.ApprovedUser.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Don't allow deleting self
+    if db_user.email == user.get("email"):
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    
+    db.delete(db_user)
+    db.commit()
+    
+    return {"message": "User deleted successfully"}
+
+@app.get("/admin/reports", response_model=List[ReportOut])
+async def admin_list_all_reports(
+    user: dict = Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """List all reports from all users (admin only)"""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    reports = db.query(models.Report).order_by(models.Report.created_at.desc()).all()
+    return reports
+
+@app.put("/admin/reports/{report_id}", response_model=ReportOut)
+async def admin_update_report(
+    report_id: int,
+    updates: ReportUpdate,
+    user: dict = Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """Update any report (admin only)"""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    report = db.query(models.Report).filter(models.Report.id == report_id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    
+    # Update only provided fields
+    update_data = updates.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(report, field, value)
+    
+    db.commit()
+    db.refresh(report)
+    
+    return report
+
+@app.delete("/admin/reports/{report_id}")
+async def admin_delete_report(
+    report_id: int,
+    user: dict = Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """Delete any report (admin only)"""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    report = db.query(models.Report).filter(models.Report.id == report_id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    
+    db.delete(report)
+    db.commit()
+    
+    return {"message": "Report deleted successfully"}
+
+# ========================================
+# Reviewer Endpoints
+# ========================================
+
+@app.get("/reviewer/reports", response_model=List[ReportOut])
+async def reviewer_list_all_reports(
+    user: dict = Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """List all reports (reviewer only)"""
+    if user.get("role") not in ["reviewer", "admin"]:
+        raise HTTPException(status_code=403, detail="Reviewer access required")
+    
+    reports = db.query(models.Report).order_by(models.Report.created_at.desc()).all()
+    return reports
+
+@app.put("/reviewer/reports/{report_id}", response_model=ReportOut)
+async def reviewer_update_report(
+    report_id: int,
+    payload: ReportUpdate,
+    user: dict = Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """Update any report (reviewer only)"""
+    if user.get("role") not in ["reviewer", "admin"]:
+        raise HTTPException(status_code=403, detail="Reviewer access required")
+    
+    report = db.query(models.Report).filter(models.Report.id == report_id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    
+    # Update fields
+    update_data = payload.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(report, field, value)
+    
+    db.commit()
+    db.refresh(report)
+    
+    return report
+
 
 @app.get("/findings", response_model=List[str])
 async def list_findings():
@@ -94,18 +239,31 @@ def get_types(
 
 @app.post("/generate", response_model=GenerationOut)
 async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
-    """Generate a comprehensive security finding report preview (not saved to database)."""
+    """Generate a comprehensive security finding report preview using LangChain structured output."""
     try:
         print(f"\n{'='*80}")
-        print(f"🔍 Starting report generation")
+        print(f"🔍 Starting report generation with LangChain + OpenAI")
         print(f"Finding: {req.finding_name}")
         print(f"Template: {req.template}")
         print(f"User: {user.get('email', 'unknown')}")
         print(f"Context length: {len(req.additional_context or '')} characters")
         print(f"{'='*80}\n")
         
-        # Get structured prompt
-        prompt = get_prompt_structured(req.template)
+        # Select the appropriate Pydantic schema based on template
+        if req.template == "one":
+            schema = TemplateOneOutput
+        else:
+            schema = TemplateCoreOutput
+        
+        # Get LangChain LLM with structured output
+        print(f"🤖 Initializing OpenAI GPT-4o-mini with structured output schema...")
+        structured_llm = get_openai_llm_with_structured_output(schema)
+        
+        # Get base prompt template
+        base_prompt_template = get_prompt_structured(req.template)
+        
+        # Create structured prompt with schema instructions
+        prompt = create_structured_prompt(base_prompt_template.template, schema)
         
         # Prepare context
         context = {
@@ -113,41 +271,24 @@ async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
             "additional_context": req.additional_context or "No additional context provided"
         }
         
-        # Format prompt
-        formatted_prompt = prompt.format(**context)
-        print(f"📝 Prompt length: {len(formatted_prompt)} characters")
+        print(f"📝 Generating with schema-aware prompt...")
         
-        # Select appropriate schema
-        schema = TemplateOneOutput if req.template == "one" else TemplateCoreOutput
-        print(f"📋 Using schema: {schema.__name__}")
+        # Generate structured output using LangChain
+        print(f"🤖 Generating report with OpenAI GPT-4o-mini (structured output)...")
+        result = structured_llm.invoke(prompt.format_messages(**context))
         
-        # Generate structured output with retry logic
-        print(f"🤖 Generating report with Mistral AI...")
-        result = llm.generate_structured(formatted_prompt, schema, max_attempts=3)
-        
-        # Log success and stats
         print(f"\n{'='*80}")
-        print(f"✅ Successfully generated comprehensive report!")
-        print(f"📊 Report Statistics:")
-        if req.template == "one":
-            print(f"  - Summary: {len(result.summary)} chars")
-            print(f"  - Vulnerability Overview: {len(result.vulnerability_overview)} chars")
-            print(f"  - Finding Details: {len(result.finding_details)} chars")
-            print(f"  - Impacts: {len(result.impacts)} chars")
-            print(f"  - Recommendations: {len(result.recommendations)} items")
-            print(f"  - Proof of Concept: {len(result.proof_of_concept)} steps")
-            print(f"  - References: {len(result.references)} links")
-        else:
-            print(f"  - Summary: {len(result.summary)} chars")
-            print(f"  - Description: {len(result.description)} chars")
-            print(f"  - Severity: {len(result.severity)} chars")
-            print(f"  - Suggested Fix: {len(result.suggested_fix)} chars")
-            print(f"  - Proof of Concept: {len(result.proof_of_concept)} steps")
-            print(f"  - References: {len(result.references)} links")
+        print(f"✅ Successfully generated structured report!")
+        print(f"📊 Report validated against Pydantic schema")
         print(f"{'='*80}\n")
         
-        # Convert to response format
+        # Convert Pydantic model to GenerationOut response
         if req.template == "one":
+            # Convert list fields to strings for the API response
+            recommendations_text = "\n".join(f"• {rec}" for rec in result.recommendations)
+            poc_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(result.proof_of_concept))
+            references_text = "\n".join(result.references)
+            
             return GenerationOut(
                 template=req.template,
                 finding_name=req.finding_name,
@@ -157,14 +298,18 @@ async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
                 vulnerability_overview=result.vulnerability_overview,
                 finding_details=result.finding_details,
                 impacts=result.impacts,
-                recommendations="\n".join(f"{i+1}. {rec}" for i, rec in enumerate(result.recommendations)),
+                recommendations=recommendations_text,
                 description=None,
                 severity=None,
                 suggested_fix=None,
-                references="\n".join(result.references),
-                proof_of_concept="\n".join(f"{i+1}. {step}" for i, step in enumerate(result.proof_of_concept))
+                references=references_text,
+                proof_of_concept=poc_text
             )
         else:
+            # Convert list fields to strings for the API response
+            poc_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(result.proof_of_concept))
+            references_text = "\n".join(result.references)
+            
             return GenerationOut(
                 template=req.template,
                 finding_name=req.finding_name,
@@ -178,42 +323,28 @@ async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
                 description=result.description,
                 severity=result.severity,
                 suggested_fix=result.suggested_fix,
-                references="\n".join(result.references),
-                proof_of_concept="\n".join(f"{i+1}. {step}" for i, step in enumerate(result.proof_of_concept))
+                references=references_text,
+                proof_of_concept=poc_text
             )
         
-    except ValueError as e:
-        # Schema validation or JSON parsing error
+    except Exception as e:
+        # Catch all errors including LangChain parsing errors
         error_detail = str(e)
+        error_type = type(e).__name__
         print(f"\n{'='*80}")
-        print(f"❌ VALIDATION ERROR")
-        print(f"Error: {error_detail[:500]}")
+        print(f"❌ ERROR ({error_type})")
+        print(f"Full Error: {error_detail}")
         print(f"{'='*80}\n")
         
-        # Provide user-friendly error message
-        if "min_length" in error_detail.lower():
+        # Check for specific error types
+        if "parse" in error_detail.lower() or "completion" in error_detail.lower():
+            # LangChain parsing error - likely truncated response
+            user_msg = "AI response was incomplete or truncated. The model may need more tokens. Please try again."
+        elif "min_length" in error_detail.lower():
             user_msg = "Report generation produced content that was too short. Please try again or provide more context."
         elif "max_length" in error_detail.lower():
             user_msg = "Report generation produced content that was too long. Please try again."
-        elif "json" in error_detail.lower():
-            user_msg = "Failed to parse AI response. This is usually temporary - please try again."
-        else:
-            user_msg = "Report validation failed. Please try again."
-        
-        raise HTTPException(
-            status_code=500, 
-            detail=f"{user_msg} (Technical details: {error_detail[:200]})"
-        )
-    
-    except RuntimeError as e:
-        # API or network errors
-        error_detail = str(e)
-        print(f"\n{'='*80}")
-        print(f"❌ RUNTIME ERROR")
-        print(f"Error: {error_detail}")
-        print(f"{'='*80}\n")
-        
-        if "rate limit" in error_detail.lower() or "429" in error_detail:
+        elif "rate limit" in error_detail.lower() or "429" in error_detail:
             user_msg = "API rate limit reached. Please wait a moment and try again."
         elif "timeout" in error_detail.lower():
             user_msg = "Request timed out. The report generation is taking longer than expected. Please try again."
@@ -223,22 +354,8 @@ async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
             user_msg = "Report generation failed. Please try again."
         
         raise HTTPException(
-            status_code=503,
-            detail=f"{user_msg} (Technical details: {error_detail[:200]})"
-        )
-    
-    except Exception as e:
-        # Unexpected errors
-        error_detail = str(e)
-        print(f"\n{'='*80}")
-        print(f"❌ UNEXPECTED ERROR")
-        print(f"Type: {type(e).__name__}")
-        print(f"Error: {error_detail}")
-        print(f"{'='*80}\n")
-        
-        raise HTTPException(
             status_code=500, 
-            detail=f"An unexpected error occurred during report generation. Please try again. (Error: {error_detail[:200]})"
+            detail=f"{user_msg}\n\nTechnical details: {error_detail[:300]}"
         )
     
 
@@ -286,6 +403,32 @@ def get_reports(
         )
         for i in items
     ]
+
+@app.put("/reports/{report_id}", response_model=ReportOut)
+def update_report_endpoint(
+    report_id: int,
+    payload: ReportUpdate,
+    user=Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    """Update a report if owned by the authenticated user."""
+    update_data = {k: v for k, v in payload.dict().items() if v is not None}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    
+    updated = update_report(db=db, report_id=report_id, data=update_data, user_id=user["uid"])
+    if not updated:
+        raise HTTPException(status_code=404, detail="Report not found or not owned by user")
+    
+    return ReportOut(
+        id=updated.id, template=updated.template, finding_name=updated.finding_name, 
+        input_summary=updated.input_summary, title=updated.title, summary=updated.summary, 
+        vulnerability_overview=updated.vulnerability_overview, finding_details=updated.finding_details, 
+        impacts=updated.impacts, recommendations=updated.recommendations, description=updated.description, 
+        severity=updated.severity, suggested_fix=updated.suggested_fix, references=updated.references, 
+        approved=updated.approved, created_at=updated.created_at.isoformat()
+    )
+
 
 @app.delete("/reports/{report_id}")
 def delete_report_endpoint(

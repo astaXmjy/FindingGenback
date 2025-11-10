@@ -33,13 +33,13 @@ def get_openai_llm_with_structured_output(schema: Type[BaseModel]) -> ChatOpenAI
     is_reasoning_model = any(x in model.lower() for x in ["search-preview", "o1", "reasoning"])
     
     # Create ChatOpenAI instance with optimized parameters
-    # Note: gpt-4o-mini supports up to 128k context
+    # Note: gpt-4o-mini supports up to 128k context, max output is 16k tokens
     # Reasoning models don't support temperature and top_p parameters
     if is_reasoning_model:
         llm = ChatOpenAI(
             model=model,
             api_key=api_key,
-            max_tokens=None,
+            max_tokens=16000,
             max_retries=5,
             timeout=180,
         )
@@ -48,7 +48,7 @@ def get_openai_llm_with_structured_output(schema: Type[BaseModel]) -> ChatOpenAI
             model=model,
             api_key=api_key,
             temperature=0.7,
-            max_tokens=None,  # Let model use default, no artificial limit
+            max_tokens=16000,  # Set explicit high limit for comprehensive reports
             top_p=0.95,
             max_retries=5,
             timeout=180,
@@ -96,15 +96,13 @@ Generate a comprehensive, professional security finding report with the followin
 
 IMPORTANT GUIDELINES:
 1. Follow all field descriptions precisely for content requirements
-2. Meet minimum and maximum character length requirements
-3. For list fields, provide the required number of items (min_items to max_items)
-4. Each list item must be substantial and detailed (minimum 50 characters)
-5. String fields (like finding_details, description, severity, suggested_fix) must be comprehensive paragraph text, NOT nested objects or dictionaries
-6. List fields (like proof_of_concept, recommendations, references) must be arrays of strings, NOT arrays of objects
-7. For proof_of_concept: provide step-by-step instructions as simple strings like ["Step 1: Navigate to...", "Step 2: Enter payload...", ...]
-8. For recommendations: start each with an action verb (Implement, Configure, Validate, Deploy, etc.)
-9. For references: format as markdown links [Title](URL) with real, authoritative sources
-10. Maintain professional tone throughout and ensure all content is ethical and non-destructive"""
+2. String fields (like finding_details, description, severity, suggested_fix) must be comprehensive paragraph text, NOT nested objects or dictionaries
+3. List fields (like proof_of_concept, recommendations, references) must be arrays of strings, NOT arrays of objects
+4. For proof_of_concept: provide step-by-step instructions as simple strings like ["Step 1: Navigate to...", "Step 2: Enter payload...", ...]
+5. For recommendations: start each with an action verb (Implement, Configure, Validate, Deploy, etc.)
+6. For references: format as markdown links [Title](URL) with real, authoritative sources
+7. Maintain professional tone throughout and ensure all content is ethical and non-destructive
+8. Generate complete and detailed content for all fields"""
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_message),

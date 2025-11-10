@@ -275,7 +275,16 @@ async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
         
         # Generate structured output using LangChain
         print(f"🤖 Generating report with OpenAI GPT-4o-mini (structured output)...")
-        result = structured_llm.invoke(prompt.format_messages(**context))
+        response = structured_llm.invoke(prompt.format_messages(**context))
+        
+        # Extract parsed result from response (include_raw=True returns dict with 'parsed' and 'raw')
+        if isinstance(response, dict) and "parsed" in response:
+            result = response["parsed"]
+            raw_response = response.get("raw")
+            print(f"📊 Raw response tokens: ~{len(str(raw_response)) // 4} tokens")
+        else:
+            # Fallback for direct response
+            result = response
         
         print(f"\n{'='*80}")
         print(f"✅ Successfully generated structured report!")

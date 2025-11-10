@@ -34,32 +34,33 @@ def get_openai_llm_with_structured_output(schema: Type[BaseModel]) -> ChatOpenAI
     
     # Create ChatOpenAI instance with optimized parameters
     # Note: gpt-4o-mini supports up to 128k context, max output is 16k tokens
+    # Set max_tokens to None to use model's maximum, or a high value
     # Reasoning models don't support temperature and top_p parameters
     if is_reasoning_model:
         llm = ChatOpenAI(
             model=model,
             api_key=api_key,
-            max_tokens=16000,
+            max_tokens=None,  # No limit - use model maximum
             max_retries=5,
-            timeout=180,
+            timeout=240  # Increased timeout for long responses
         )
     else:
         llm = ChatOpenAI(
             model=model,
             api_key=api_key,
-            temperature=0.7,
-            max_tokens=16000,  # Set explicit high limit for comprehensive reports
-            top_p=0.95,
+            temperature=0.3,  # Lower temperature for more consistent output
+            max_tokens=None,  # No limit - use model maximum
+            top_p=1.0,
             max_retries=5,
-            timeout=180,
+            timeout=240  # Increased timeout for long responses
         )
     
-    # Bind structured output with include_raw=False to get clean Pydantic model
+    # Bind structured output with include_raw=True to handle parsing errors gracefully
     # OpenAI supports native structured outputs via function calling (json_schema method)
     structured_llm = llm.with_structured_output(
         schema, 
-        method="json_schema",  # Use OpenAI's native structured outputs
-        include_raw=False
+        method="json_schema",
+        include_raw=True  # Return both parsed and raw for better error handling
     )
     
     return structured_llm

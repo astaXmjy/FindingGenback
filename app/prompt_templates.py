@@ -1,6 +1,7 @@
 from langchain_core.prompts import PromptTemplate
 
-TEMPLATE_ONE_STRUCTURED = """You are a senior penetration tester writing a professional security finding report for a client deliverable. The report must be comprehensive, technically accurate, and immediately actionable.
+# Template One Prompt - Detailed pentest format
+TEMPLATE_ONE_PROMPT = """You are a senior penetration tester writing a professional security finding report.
 
 Finding Name: {finding_name}
 Additional Context: {additional_context}
@@ -61,10 +62,10 @@ CRITICAL REQUIREMENTS:
 - Be technically accurate and specific
 - Use industry-standard terminology
 - Focus on actionable information that helps teams fix the issue
-- Maintain ethical hacking principles throughout
-"""
+- Maintain ethical hacking principles throughout"""
 
-TEMPLATE_CORE_STRUCTURED = """You are a senior penetration tester writing a comprehensive security finding report for an enterprise client. This report will be reviewed by security teams, developers, and executive stakeholders. It must be thorough, professional, and actionable.
+# Template Core Prompt - Core comprehensive format
+TEMPLATE_CORE_PROMPT = """You are a senior penetration tester writing a comprehensive security finding report for an enterprise client.
 
 Finding Name: {finding_name}
 Additional Context: {additional_context}
@@ -143,17 +144,22 @@ CRITICAL REQUIREMENTS:
 - Include concrete examples, code snippets, and configuration details
 - Structure content with clear paragraphs and sections for readability
 - Maintain ethical hacking principles and responsible disclosure throughout
-- Focus on helping the client understand risk and implement effective remediations
-"""
+- Focus on helping the client understand risk and implement effective remediations"""
 
-PROMPT_ONE_STRUCTURED = PromptTemplate.from_template(TEMPLATE_ONE_STRUCTURED)
-PROMPT_CORE_STRUCTURED = PromptTemplate.from_template(TEMPLATE_CORE_STRUCTURED)
 
-def get_prompt_structured(template_key: str) -> PromptTemplate:
-    """Get structured prompt template"""
+def get_prompt_template(template_key: str) -> str:
+    """
+    Get the prompt template string for the specified template.
+    
+    Args:
+        template_key: Either "one" or "core"
+        
+    Returns:
+        Prompt template string with {finding_name} and {additional_context} placeholders
+    """
     if template_key == "one":
-        return PROMPT_ONE_STRUCTURED
+        return TEMPLATE_ONE_PROMPT
     elif template_key == "core":
-        return PROMPT_CORE_STRUCTURED
+        return TEMPLATE_CORE_PROMPT
     else:
-        raise ValueError(f"Invalid template key: {template_key}")
+        raise ValueError(f"Invalid template key: {template_key}. Must be 'one' or 'core'")

@@ -7,10 +7,10 @@ from sqlalchemy.orm import Session
 from .import models
 from .auth import verify_firebase_token
 from .db import get_db,engine
-from .llm import get_openai_llm_with_structured_output, create_structured_prompt
+from .llm import get_structured_llm
 from .schemas import GenerateRequest, GenerationOut, ReportCreate, ReportOut, ReportUpdate, FindingTypeSummary,ApproveUserRequest,ApprovedUserOut
 from .output_schemas import TemplateOneOutput, TemplateCoreOutput
-from .prompt_templates import get_prompt_structured
+from .prompt_templates import get_prompt_template
 from .crud import create_report, list_reports, types_summary, update_report, delete_report
 
 models.Base.metadata.create_all(bind=engine)
@@ -239,52 +239,34 @@ def get_types(
 
 @app.post("/generate", response_model=GenerationOut)
 async def generate(req: GenerateRequest, user=Depends(verify_firebase_token)):
-    """Generate a comprehensive security finding report preview using LangChain structured output."""
+    """Generate a comprehensive security finding report using OpenAI structured output."""
     try:
         print(f"\n{'='*80}")
-        print(f"🔍 Starting report generation with LangChain + OpenAI")
+        print(f"🔍 Starting report generation")
         print(f"Finding: {req.finding_name}")
         print(f"Template: {req.template}")
         print(f"User: {user.get('email', 'unknown')}")
         print(f"Context length: {len(req.additional_context or '')} characters")
         print(f"{'='*80}\n")
         
-        # Select the appropriate Pydantic schema based on template
-        if req.template == "one":
-            schema = TemplateOneOutput
-        else:
-            schema = TemplateCoreOutput
+        # Select schema based on template
+        schema = TemplateOneOutput if req.template == "one" else TemplateCoreOutput
         
-        # Get LangChain LLM with structured output
-        print(f"🤖 Initializing OpenAI GPT-4o-mini with structured output schema...")
-        structured_llm = get_openai_llm_with_structured_output(schema)
+        # Get structured LLM with 100% schema compliance
+        print(f"🤖 Initializing OpenAI with structured output (json_schema method)...")
+        structured_llm = get_structured_llm(schema)
         
-        # Get base prompt template
-        base_prompt_template = get_prompt_structured(req.template)
+        # Get prompt template and format it
+        prompt_template = get_prompt_template(req.template)
+        prompt = prompt_template.format(
+            finding_name=req.finding_name,
+            additional_context=req.additional_context or "No additional context provided"
+        )
         
-        # Create structured prompt with schema instructions
-        prompt = create_structured_prompt(base_prompt_template.template, schema)
+        print(f"📝 Generating report with strict schema compliance...")
         
-        # Prepare context
-        context = {
-            "finding_name": req.finding_name,
-            "additional_context": req.additional_context or "No additional context provided"
-        }
-        
-        print(f"📝 Generating with schema-aware prompt...")
-        
-        # Generate structured output using LangChain
-        print(f"🤖 Generating report with OpenAI GPT-4o-mini (structured output)...")
-        response = structured_llm.invoke(prompt.format_messages(**context))
-        
-        # Extract parsed result from response (include_raw=True returns dict with 'parsed' and 'raw')
-        if isinstance(response, dict) and "parsed" in response:
-            result = response["parsed"]
-            raw_response = response.get("raw")
-            print(f"📊 Raw response tokens: ~{len(str(raw_response)) // 4} tokens")
-        else:
-            # Fallback for direct response
-            result = response
+        # Invoke and get validated Pydantic object directly
+        result = structured_llm.invoke(prompt)
         
         print(f"\n{'='*80}")
         print(f"✅ Successfully generated structured report!")
